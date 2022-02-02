@@ -1,0 +1,93 @@
+#!groovy
+pipeline {
+  agent {
+    kubernetes {
+      yaml '''
+        apiVersion: v1
+        kind: Pod
+        spec:
+          containers:
+          - name: singluser
+            image: vtw00.azurecr.io/jupyter/singleuser/notebook:1.6-lx-py
+            lifecycle:
+                postStart:
+                    exec:
+                        command:
+                            - sh
+                            - '-c'
+                            - >
+                              /usr/local/bin/init-repo-k8s.sh; sleep 1;
+        '''
+    }
+  } 
+   options { timestamps() }
+        stages {
+            stage('find__urls') {
+                steps {
+                    container('singluser'){
+                            sh '''
+                            echo "<>><><>HTTP_URL_VALIDATION<><><><>" >> url_status
+                            for sourse in $(find ./ -name "*.ipynb" | cut -d "/" -f2-)
+                            do
+                                for line in $(cat $sourse | grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*")
+                                do
+                                    status=$(curl -o /dev/null --silent --head --write-out '%{http_code}' $line || true)
+                                    if [ $status = '200' -o $status = '301' -o $status = '302' ]
+                                    then
+                                        echo " In file: $sourse $line: OK" >> url_status
+                                    else
+                                        echo " In file: $sourse $line: NOT RESPONDING" >> url_status
+                                    fi      
+                                done                            
+                            done
+                            echo "<><><><><><><><><><><><><><><><><><>" >> url_status
+                            '''
+
+                }
+            }
+        }    
+            stage('find__local'){
+                steps {
+                    container('singluser'){
+                        sh '''
+                        echo "<>><><>LOCAL_FILE_VALIDATION<><><>" >> url_status
+                        for sourse in $(find ./ -name "*.ipynb" | cut -d "/" -f2-)
+                        do
+                            for line in $(cat $sourse | egrep "\\.{1,2}(/.*[^/])?$" | true )
+                            do
+                                echo $(ls $line | true ) >> url_status
+                            done    
+                        done
+                        echo "<><><><><><><><><><><><><><><><>" >> url_status
+                        cat url_status
+                        if cat url_status | grep "RESPONDING"; then
+                            exit 1
+                        else
+                            echo
+                        fi
+                        '''
+                    }        
+                }
+            }
+        }                
+    post {
+        success {   
+                deleteDir()  
+            }
+        failure {
+            script {
+                    GIT_COMMIT_EMAIL= sh (
+                        // script: 'git log -1 --pretty=format:\'%an\'',
+                        script: 'git --no-pager show -s --format=\'%ae\'',
+                        returnStdout: true
+                    ).trim()
+            emailext (
+                body: '${FILE,path="./url_status"}',
+                subject: 'Build failed in Jenkins: $PROJECT_NAME - #$BUILD_NUMBER',
+                to: "${GIT_COMMIT_EMAIL}"
+            )
+            deleteDir() 
+            }
+        }        
+    }
+}                

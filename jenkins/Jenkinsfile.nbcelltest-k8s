@@ -1,0 +1,74 @@
+pipeline {
+  agent {
+    kubernetes {
+      yaml '''
+        apiVersion: v1
+        kind: Pod
+        spec:
+          containers:
+          - name: singluser
+            image: vtw00.azurecr.io/jupyter/singleuser/notebook:1.6-lx-py
+            lifecycle:
+                postStart:
+                    exec:
+                        command:
+                            - sh
+                            - '-c'
+                            - >
+                              /usr/local/bin/init-repo-k8s.sh; sleep 1;
+        '''
+    }
+  }
+  stages {
+    stage('nbcelltests') {
+      steps {
+        container('singluser') {
+          sh '''
+          cd ..
+          for sourse in $(find ./ -name "*.ipynb" | cut -d "/" -f2-)
+          do
+            echo "File test results: $sourse" >> result_file
+            START=$(nbcelltests test $sourse | grep -n "collected" | cut -f1 -d: || true)
+            END=$(nbcelltests test $sourse | grep -n  -m2 "$*=" | tail -n1 | cut -f1 -d: || true)
+            for nuber_of_line in $(seq $START $END)
+            do
+                echo $(nbcelltests test $sourse | awk -v number="$nuber_of_line" '(NR == number)' || true ) >> result_file
+            done
+            echo "<><><><><><><><><><><><><><>><><><><><><><><><><><><><><><><><><>><><><><><><><>" >> result_file
+            echo "><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><><" >> result_file
+          done
+          cat result_file
+          if cat result_file | grep "FAILED"; then
+            echo "Test Execution Stage FAIL"
+            exit 1
+          else 
+            echo "Test Execution Stage Completed"
+          fi
+          '''
+        }
+      }
+    }
+  }
+        post {
+
+            success {   
+                deleteDir()  
+            }
+            failure {
+                script {
+                    GIT_COMMIT_EMAIL= sh (
+                        // script: 'git log -1 --pretty=format:\'%an\'',
+                        script: 'git --no-pager show -s --format=\'%ae\'',
+                        returnStdout: true
+                    ).trim()
+                }
+                echo "Git committer email: ${GIT_COMMIT_EMAIL}"
+                emailext body: 'Attention pipelin for checking tests was completed with a failure status!Project: $JOB_NAME Build Number: $BUILD_NUMBER  Check console output at $BUILD_URL to view the results. ',
+                subject: 'Build failed in Jenkins: $PROJECT_NAME - #$BUILD_NUMBER',
+                to: "${GIT_COMMIT_EMAIL}"
+                deleteDir() 
+            }   
+                
+        }
+}
+

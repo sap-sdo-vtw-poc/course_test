@@ -1,0 +1,105 @@
+#!groovy
+pipeline {
+  agent {
+    kubernetes {
+      yaml '''
+        apiVersion: v1
+        kind: Pod
+        spec:
+          containers:
+          - name: singluser
+            image: vtw00.azurecr.io/jupyter/singleuser/notebook:1.9-lx-jagnt-py
+            imagePullPolicy: Always
+            lifecycle:
+                postStart:
+                    exec:
+                        command:
+                            - sh
+                            - '-c'
+                            - >
+                              /usr/local/bin/init-repo-k8s-jagnt.sh; sleep 1;
+        '''
+    }
+  }
+   environment {
+       ADMIN_EMAIL = ''
+       AZURE_SPEECH_KEY='be47ed3fad294c419c42dd66cc74df53'
+       AZURE_REGION='eastus2'
+   }
+   options { 
+       timestamps()
+        }
+        stages {
+            stage('generate_audio_files') {
+                steps {
+                    container('singluser'){
+                        catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE'){
+                            sh '''
+                            ./mp3_generation.sh $(ls | grep ipynb )
+                            '''
+                    }
+                }
+            }
+        }
+            stage('validation of audio files'){
+                steps {
+                    container('singluser'){
+                        sh '''
+                        type_audio='audio'
+                        for sourse in $(find ./ -name "*.mp3")
+                        do
+                            type=$(file -b --mime-type $sourse | cut -d"/" -f1)
+                        if [ "$type" = "$type_audio" ]
+                        then
+                            echo "$sourse -  $type file" >> result
+                        else
+                            echo "$sourse - not audio file, type is $type" >> result
+                        fi
+                        done
+                        if cat result | grep -w 'not audio file'
+                        then
+                            echo "Problem with creating audio files"
+                        exit 1
+                        else 
+                            echo "All audio files have been verified"
+                        fi
+                        '''
+                    }
+                }
+            }
+            stage('Git push to origin'){
+                steps{
+                    container('singluser'){
+                        sh '''
+                        git add audio/*
+                        git commit -m "added from Jenkins"
+                        BRANCH_NAME=$(echo $GIT_BRANCH | cut -d "/" -f 2)
+                        git push origin HEAD:$BRANCH_NAME
+                        '''
+                    }
+                }
+            }   
+    }
+                        
+    post {
+        success {
+            script {  
+                    deleteDir()         
+            }            
+        }
+        failure {
+            script {
+                    GIT_COMMIT_EMAIL= sh (
+                        script: 'git --no-pager show -s --format=\'%ae\'',
+                        returnStdout: true
+                    ).trim()
+            emailext (
+                body: 'Track generation error',
+                subject: 'Track generation error: $PROJECT_NAME - #$BUILD_NUMBER  Commiter $GIT_COMMIT_EMAIL',
+                to: '$ADMIN_EMAIL'
+            )
+            deleteDir() 
+            }
+        }        
+    }
+}                
