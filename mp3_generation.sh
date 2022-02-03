@@ -137,7 +137,7 @@ do
             mkdir -p audio && cd ./audio && mkdir -p $AUDIO_DIR/$language && cd ./$AUDIO_DIR/$language
             echo $out
             echo "<speak version='1.0' xml:lang='zh-CN'>" > $output_file_name.xml && \
-            echo "    <voice xml:lang='zh-CN' xml:gender='Female' name='es-ES-ElviraNeural'>" >> $output_file_name.xml && \
+            echo "    <voice xml:lang='zh-CN' xml:gender='Female' name='zh-HK-HiuMaanNeural'>" >> $output_file_name.xml && \
             echo "        $out" >> $output_file_name.xml && \
             echo '    </voice>' >> $output_file_name.xml && \
             echo '</speak>' >> $output_file_name.xml
